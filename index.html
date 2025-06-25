@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF‑8">
+  <title>WebRTC 拉流 – Janus Echo Test</title>
+  <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
+  <style> body { text-align: center; margin-top: 40px; } video { width: 640px; border: 1px solid #ccc; } </style>
+</head>
+<body>
+  <h1>WebRTC 拉流 – 使用 Janus Echo Test</h1>
+  <video id="remoteVideo" autoplay playsinline></video>
+
+  <script>
+  (async () => {
+    const server = "wss://janus.conf.meetecho.com/janus";
+    const pc = new RTCPeerConnection({
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+    });
+
+    pc.ontrack = e => {
+      remoteVideo.srcObject = e.streams[0];
+    };
+    pc.onicecandidate = e => {
+      if (e.candidate) ws.send(JSON.stringify({ janus:"trickle", candidate:e.candidate }));
+    };
+
+    const ws = new WebSocket(server);
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ janus:"create", transaction:"init" }));
+    };
+    ws.onmessage = async e => {
+      const msg = JSON.parse(e.data);
+      if (msg.janus === "success" && msg.transaction==="init") {
+        const handle = msg.data.id;
+        // 建立 Janus echo 回显会话
+        ws.send(JSON.stringify({ janus:"attach", plugin:"janus.plugin.echotest", transaction:"att1" }));
+      }
+      else if (msg.janus==="success" && msg.transaction==="att1") {
+        const id = msg.data.id;
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        ws.send(JSON.stringify({ janus:"message", body:{audio:true, video:true}, transaction:"msg1", jsep:pc.localDescription }));
+      }
+      else if (msg.janus==="event" && msg.jsep) {
+        await pc.setRemoteDescription(msg.jsep);
+      }
+      else if (msg.janus==="trickle" && msg.candidate) {
+        await pc.addIceCandidate(msg.candidate);
+      }
+    };
+    ws.onerror = e => console.error("WS 错误", e);
+    ws.onclose = () => console.log("WS 关闭");
+  })();
+  </script>
+</body>
+</html>
